@@ -129,8 +129,8 @@ def create_app(ui_queue, proxy_api_key=None) -> FastAPI:
     async def stream_antigravity(payload: dict, headers: dict) -> AsyncGenerator[str, None]:
         url = "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
         
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            try:
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as response:
                     if response.status_code != 200:
                         body = await response.aread()
@@ -184,7 +184,7 @@ def create_app(ui_queue, proxy_api_key=None) -> FastAPI:
                                     "id": f"call_{uuid.uuid4().hex[:8]}",
                                     "type": "function",
                                     "function": {
-                                        "name": fc["name"],
+                                        "name": fc.get("name", "unknown_tool"),
                                         "arguments": json.dumps(fc.get("args", {}))
                                     }
                                 })
@@ -222,17 +222,15 @@ def create_app(ui_queue, proxy_api_key=None) -> FastAPI:
                         "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
                     }
                     if final_usage:
-                        # Standard OpenAI way to pass token stats in SSE streaming
                         openai_chunk_done["usage"] = final_usage
                         
                     yield f"data: {json.dumps(openai_chunk_done)}\n\n"
                     yield "data: [DONE]\n\n"
-
-            except httpx.RequestError as exc:
-                err_msg = f"[ERROR] Network error: {exc}"
-                send_log(err_msg)
-                yield f"data: {json.dumps({'error': {'message': err_msg}})}\n\n"
-                yield "data: [DONE]\n\n"
+        except Exception as e:
+            err_msg = f"[ERROR] Streaming generator crashed: {str(e)}"
+            send_log(err_msg)
+            yield f"data: {json.dumps({'error': {'message': err_msg}})}\n\n"
+            yield "data: [DONE]\n\n"
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
@@ -371,13 +369,66 @@ def create_app(ui_queue, proxy_api_key=None) -> FastAPI:
             "request": request_body,
         }
 
-        send_log(f"[INFO] Routing request for model: {model} (Wire: {wire_model})")
+        send_log(f"[INFO] Routing request for model: {model} (Wire: {wire_model}) [Stream: {bool(body.get('stream'))}]")
         
         if body.get("stream"):
             return StreamingResponse(stream_antigravity(payload, headers), media_type="text/event-stream")
         else:
-            # For non-streaming, just return a mock error saying use stream=true
-            # (Antigravity proxy is optimized for streaming)
-            raise HTTPException(status_code=400, detail="This proxy requires 'stream: true' in your request.")
+            # Build non-streaming response by consuming the generator
+            full_content = ""
+            tool_calls_dict = {}
+            final_usage_data = None
+            chat_id = ""
+            
+            async for chunk_str in stream_antigravity(payload, headers):
+                if not chunk_str.startswith("data: "): continue
+                raw_data = chunk_str[6:].strip()
+                if raw_data == "[DONE]": continue
+                
+                try:
+                    data = json.loads(raw_data)
+                    chat_id = data.get("id", chat_id)
+                    delta = data["choices"][0].get("delta", {})
+                    
+                    if "content" in delta and delta["content"]:
+                        full_content += delta["content"]
+                        
+                    if "tool_calls" in delta:
+                        for tc in delta["tool_calls"]:
+                            idx = tc["index"]
+                            if idx not in tool_calls_dict:
+                                tool_calls_dict[idx] = tc
+                            else:
+                                # Append arguments if streaming (though antigravity usually sends it all at once)
+                                if "arguments" in tc.get("function", {}):
+                                    tool_calls_dict[idx]["function"]["arguments"] += tc["function"]["arguments"]
+                                    
+                    if "usage" in data:
+                        final_usage_data = data["usage"]
+                except Exception:
+                    continue
+                    
+            message_obj = {"role": "assistant"}
+            if full_content:
+                message_obj["content"] = full_content
+                
+            if tool_calls_dict:
+                message_obj["tool_calls"] = [tool_calls_dict[i] for i in sorted(tool_calls_dict.keys())]
+                
+            response_obj = {
+                "id": chat_id,
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": payload.get("model", "gemini"),
+                "choices": [{
+                    "index": 0,
+                    "message": message_obj,
+                    "finish_reason": "stop"
+                }]
+            }
+            if final_usage_data:
+                response_obj["usage"] = final_usage_data
+                
+            return JSONResponse(content=response_obj)
 
     return app
