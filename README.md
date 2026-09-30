@@ -1,5 +1,8 @@
 # 🚀 Antigravity OpenAI-Compatible Proxy
 
+> ⚠️ **DISCLAIMER & WARNING**  
+> This project intercepts and utilizes internal Google Cloud Code / Antigravity endpoints in a way they were not intended to be used. This is **against the Terms of Service (TOS)** and expected usage of the Antigravity API. By using this software, **you assume all risks** associated with your Google account, including potential rate-limiting, bans, or account suspension. Use at your own risk!
+
 <div align="center">
   <h3>Bridge the gap between Google's internal Antigravity AI endpoints and OpenAI-compatible applications.</h3>
   
