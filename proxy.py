@@ -59,7 +59,7 @@ def _to_gemini_schema(schema: Any) -> Any:
         result["items"] = {"type": "STRING"}
     return result
 
-def create_app(ui_queue) -> FastAPI:
+def create_app(ui_queue, proxy_api_key=None) -> FastAPI:
     app = FastAPI(title="Antigravity OpenAI Proxy")
     
     app.add_middleware(
@@ -79,6 +79,18 @@ def create_app(ui_queue) -> FastAPI:
     def send_stat(metric: str):
         if ui_queue:
             ui_queue.put({"type": "stat", "metric": metric})
+            
+    def verify_proxy_key(request: Request):
+        if proxy_api_key:
+            auth_header = request.headers.get("Authorization")
+            if not auth_header or not auth_header.startswith("Bearer "):
+                send_log("[WARNING] Request rejected: Missing or invalid Authorization header.")
+                raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+            
+            token = auth_header.split(" ")[1]
+            if token != proxy_api_key:
+                send_log(f"[WARNING] Request rejected: Invalid API Key provided ({token}).")
+                raise HTTPException(status_code=401, detail="Invalid API Key")
 
     @app.middleware("http")
     async def stats_middleware(request: Request, call_next):
@@ -99,7 +111,8 @@ def create_app(ui_queue) -> FastAPI:
             return await call_next(request)
 
     @app.get("/v1/models")
-    async def get_models():
+    async def get_models(request: Request):
+        verify_proxy_key(request)
         models = [
             "gemini-3.6-flash",
             "gemini-3.7-flash-low",
@@ -223,6 +236,7 @@ def create_app(ui_queue) -> FastAPI:
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
+        verify_proxy_key(request)
         body = await request.json()
         
         token = await get_antigravity_token()

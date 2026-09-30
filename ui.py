@@ -38,8 +38,13 @@ class ProxyApp:
         
         ttk.Label(top_frame, text="Port:").pack(side=tk.LEFT, padx=(0, 5))
         self.port_var = tk.StringVar(value="1337")
-        self.port_entry = ttk.Entry(top_frame, textvariable=self.port_var, width=10)
+        self.port_entry = ttk.Entry(top_frame, textvariable=self.port_var, width=6)
         self.port_entry.pack(side=tk.LEFT, padx=(0, 15))
+        
+        ttk.Label(top_frame, text="API Key:").pack(side=tk.LEFT, padx=(0, 5))
+        self.api_key_var = tk.StringVar(value="dummy")
+        self.api_key_entry = ttk.Entry(top_frame, textvariable=self.api_key_var, width=15)
+        self.api_key_entry.pack(side=tk.LEFT, padx=(0, 15))
         
         self.start_btn = ttk.Button(top_frame, text="Start Server", command=self.start_server)
         self.start_btn.pack(side=tk.LEFT, padx=5)
@@ -130,12 +135,13 @@ class ProxyApp:
         self.comp_lbl.config(text=f"Outgoing (Completion): {ct:,}")
         self.total_lbl.config(text=f"Total: {(pt + ct):,}")
 
-    def run_uvicorn(self, port):
+    def run_uvicorn(self, port, api_key):
         # We must create the app here inside the thread so it gets the queue reference
-        app = create_app(self.q)
+        app = create_app(self.q, api_key)
         config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="error")
         self.server = uvicorn.Server(config)
         self.q.put({"type": "log", "message": f"🚀 Proxy started. Local: http://127.0.0.1:{port} | LAN: http://<your-ip-address>:{port}"})
+        self.q.put({"type": "log", "message": f"🔑 Proxy API Key required: {api_key if api_key else '[None] (Open Access)'}"})
         self.server.run()
         self.q.put({"type": "log", "message": "🛑 Server stopped."})
 
@@ -148,12 +154,15 @@ class ProxyApp:
             self.log_message("[ERROR] Invalid port number.")
             return
             
+        api_key = self.api_key_var.get().strip()
+            
         self.is_running = True
         self.start_btn.config(state=tk.DISABLED)
         self.port_entry.config(state=tk.DISABLED)
+        self.api_key_entry.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
         
-        self.server_thread = threading.Thread(target=self.run_uvicorn, args=(port,), daemon=True)
+        self.server_thread = threading.Thread(target=self.run_uvicorn, args=(port, api_key), daemon=True)
         self.server_thread.start()
 
     def stop_server(self):
@@ -165,6 +174,7 @@ class ProxyApp:
         self.is_running = False
         self.start_btn.config(state=tk.NORMAL)
         self.port_entry.config(state=tk.NORMAL)
+        self.api_key_entry.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         
     def copy_url(self):
