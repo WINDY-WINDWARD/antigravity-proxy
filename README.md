@@ -26,11 +26,12 @@
 
 The proxy automatically exposes a `/v1/models` route with support for:
 
-* `gemini-3.6-flash`
 * `gemini-3.7-flash-low` (Fast)
 * `gemini-3.7-flash-medium` (Balanced)
 * `gemini-3.7-flash-high` (Reasoning)
-* `gemini-3.8-flash`
+* `gemini-3.8-flash-low` (Fast)
+* `gemini-3.8-flash-medium` (Balanced)
+* `gemini-3.8-flash-high` (Reasoning)
 * `gemini-3.1-pro` (Quality)
 
 ---
